@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Visualizing Skills and Salaries in the Technical Job Market</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://unpkg.com/topojson-client@3"></script>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #111831;
+      --text: #e8ecf1;
+      --muted: #97a3b6;
+      --accent: #7aa2ff;
+      --grid: #1c2442;
+      --tooltip: #0e1530;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: var(--text);
+      background: radial-gradient(1200px 800px at 80% -10%, #203066 0, #0b1020 50%);
+    }
+
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--grid);
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 {
+      margin: 0;
+      font-weight: 700;
+      font-size: clamp(20px, 2.4vw, 28px);
+      letter-spacing: 0.2px;
+    }
+
+    /* === Navigation Button Style === */
+    .nav-btn {
+      background: linear-gradient(135deg, var(--accent), #4f80ff);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+      box-shadow: 0 4px 15px rgba(122, 162, 255, 0.3);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    .nav-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(122, 162, 255, 0.5);
+      background: linear-gradient(135deg, #8cb0ff, #5b89ff);
+    }
+    .nav-btn span.arrow {
+      font-size: 1.2em;
+      line-height: 1;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 16px;
+      padding: 16px;
+      min-height: calc(100vh - 80px);
+    }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border: 1px solid var(--grid);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+
+    .card h2 {
+      margin: 4px 6px 12px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    .viz {
+      position: relative;
+      width: 100%;
+      height: 520px;
+      border-radius: 12px;
+      overflow: hidden;
+      background:
+        radial-gradient(800px 400px at 20% 0%, rgba(255,255,255,0.05), rgba(255,255,255,0)) ,
+        linear-gradient(180deg, #0f1632, #0b1125);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 6px 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .toolbar label { opacity: 0.85; }
+    .toolbar select {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--grid);
+      padding: 6px 8px;
+      border-radius: 8px;
+      max-width: 200px;
+    }
+
+    /* Legend */
+    .legend {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      background: rgba(14, 21, 48, 0.9);
+      border: 1px solid var(--grid);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 12px;
+      backdrop-filter: blur(4px);
+      pointer-events: none;
+    }
+    .legend h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .legend .scale { display: flex; gap: 4px; align-items: center; }
+    .legend .scale div {
+      width: 16px; height: 12px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* Tooltip */
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: var(--tooltip);
+      color: var(--text);
+      border: 1px solid var(--grid);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      box-shadow: 0 10px 20px rgba(0,0,0,0.35);
+      opacity: 0;
+      transform: translate(-50%, -120%);
+      white-space: nowrap;
+      z-index: 1000;
+    }
+
+    .note {
+      margin: 8px 6px 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    /* Detail modal base */
+    .detail-modal.hidden { display: none; }
+    .detail-modal { position: fixed; inset: 0; z-index: 999; display: grid; place-items: center; }
+    .detail-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); backdrop-filter: blur(2px); }
+    .detail-panel { 
+        position: relative; 
+        width: min(1200px, 96vw);
+        max-height: 90vh; 
+        background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)); 
+        border: 1px solid var(--grid); 
+        border-radius: 16px; 
+        box-shadow: 0 20px 60px rgba(0,0,0,0.5); 
+        padding: 12px; 
+        display: flex; 
+        flex-direction: column; 
+    }
+    .detail-header { display: flex; align-items: center; gap: 10px; padding: 4px 6px 10px; }
+    .detail-header h3 { margin: 0; font-size: 16px; font-weight: 700; }
+    #detailClose { margin-left: auto; background: transparent; color: var(--text); border: 1px solid var(--grid); border-radius: 10px; padding: 6px 10px; cursor: pointer; }
+    #countryClose { position: absolute; top: 8px; right: 8px; background: transparent; color: var(--text); border: 1px solid var(--grid); border-radius: 10px; padding: 6px 10px; cursor: pointer; }
+
+    /* 4-grid inside detail modal */
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      padding: 4px 6px 8px;
+    }
+    .mini-card {
+      background: radial-gradient(400px 200px at 0% 0%, rgba(255,255,255,0.05), transparent),
+                  linear-gradient(180deg, rgba(5,10,30,0.96), rgba(10,16,40,0.96));
+      border-radius: 12px;
+      border: 1px solid var(--grid);
+      padding: 8px 10px 10px;
+      display: flex;
+      flex-direction: column;
+      min-height: 190px;
+    }
+    .mini-card h4 {
+      margin: 0 0 4px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .mini-card h4 span {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 400;
+    }
+    .mini-viz {
+      flex: 1;
+      margin-top: 2px;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+    }
+    .mini-viz svg {
+      display: block;
+    }
+
+    .hint { opacity: 0.85; font-size: 12px; color: var(--muted); padding: 0 8px 6px; }
+
+    /* Country Modal Layout */
+    .country-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 12px;
+      width: 100%;
+      height: 520px;
+    }
+    @media (max-width: 800px) {
+      .country-grid { grid-template-columns: 1fr; height: auto; }
+      .country-right-col { height: 500px; }
+    }
+    .country-right-col {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+    }
+    .half-card {
+      flex: 1;
+      background: rgba(14, 21, 48, 0.4);
+      border: 1px solid var(--grid);
+      border-radius: 12px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .half-card h4 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .half-viz {
+      flex: 1;
+      width: 100%;
+      position: relative;
+    }
+
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Visualizing Skills and Salaries in the Technical Job Market</h1>
+    <a href="advanced_view.html" class="nav-btn">
+      <span>Advanced Analytics</span>
+      <span class="arrow">➔</span>
+    </a>
+  </header>
+
+  <main class="layout">
+    <section class="card">
+      <h2>Language Usage Share</h2>
+      <div class="toolbar">
+        <label>Filter by role:</label>
+        <select id="roleFilter">
+          <option value="all" selected>All Developers</option>
+          <option value="frontend">Frontend</option>
+          <option value="fullstack">Full-Stack</option>
+          <option value="backend">Backend</option>
+          <option value="mobile_game">Mobile & Game</option>
+          <option value="ai_ml">AI / ML</option>
+          <option value="data">Data Related</option>
+          <option value="cloud_sec">Cloud, Sec & DevOps</option>
+          <option value="pm">Product/Project Manager</option>
+          <option value="support">Support & Solutions</option>
+          <option value="other_roles">Other Roles</option>
+        </select>
+      </div>
+      <div id="pieViz" class="viz"></div>
+    </section>
+
+    <section class="card">
+      <h2>Average Salary by Country (USD)</h2>
+      <div class="toolbar">
+        <span style="margin-left:auto;">Zoom: drag + scroll</span>
+      </div>
+      <div id="mapViz" class="viz"></div>
+      <p class="note">
+        Note: Map colors use the average <code>Salary</code> from your dataset by country name.
+        Click a country to see its language salary profile.
+      </p>
+    </section>
+  </main>
+
+  <div id="detailModal" class="detail-modal hidden">
+    <div class="detail-backdrop"></div>
+    <div class="detail-panel">
+      <div class="detail-header">
+        <h3 id="detailTitle">Developers Using —</h3>
+        <button id="detailClose" aria-label="Close">✕</button>
+      </div>
+      <div class="hint">Each panel aggregates developers who reported having worked with this language in your dataset.</div>
+      <div class="detail-grid">
+        <div class="mini-card">
+          <h4>Age Distribution <span>(count)</span></h4>
+          <div id="ageChart" class="mini-viz"></div>
+        </div>
+        <div class="mini-card">
+          <h4>Years of Experience <span>(histogram)</span></h4>
+          <div id="expChart" class="mini-viz"></div>
+        </div>
+        <div class="mini-card">
+          <h4>Education Level <span>(top 6)</span></h4>
+          <div id="eduChart" class="mini-viz"></div>
+        </div>
+        <div class="mini-card">
+          <h4>Industry <span>(top 10)</span></h4>
+          <div id="indChart" class="mini-viz"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="countryModal" class="detail-modal hidden">
+    <div class="detail-backdrop"></div>
+    <div class="detail-panel">
+      <div class="detail-header">
+        <h3 id="countryTitle">Country Profile</h3>
+        <button id="countryClose" aria-label="Close">✕</button>
+      </div>
+      
+      <div class="country-grid">
+        <div id="countryRadarViz" class="viz" style="height: 100%;"></div>
+        
+        <div class="country-right-col">
+          <div class="half-card">
+            <h4>Top Languages (Share)</h4>
+            <div id="countryLangViz" class="half-viz"></div>
+          </div>
+          <div class="half-card">
+            <h4>Role Distribution</h4>
+            <div id="countryRoleViz" class="half-viz"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="tooltip" class="tooltip"></div>
+
+  <script>
+  // ==========================
+  // 0) UTILITIES & GLOBALS
+  // ==========================
+  function debounce(fn, wait = 200) {
+    let t;
+    return function debounced(...args) {
+      const ctx = this;
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(ctx, args), wait);
+    };
+  }
+
+  let _pieResizeHandler = null;
+  function mountPieResize(handler) {
+    if (_pieResizeHandler) window.removeEventListener('resize', _pieResizeHandler);
+    _pieResizeHandler = debounce(handler, 200);
+    window.addEventListener('resize', _pieResizeHandler);
+  }
+
+  const EDUC_ORDER = [
+    'Primary/elementary school',
+    'Secondary school (e.g. American high school, German Realschule or Gymnasium, etc.)',
+    'Some college/university study without earning a degree',
+    'Associate degree (A.A., A.S., etc.)',
+    'Bachelor’s degree (B.A., B.S., B.Eng., etc.)',
+    'Master’s degree (M.A., M.S., M.Eng., MBA, etc.)',
+    'Professional degree (JD, MD, Ph.D, Ed.D, etc.)',
+    'Other doctoral degree (Ph.D., Ed.D., etc.)'
+  ];
+
+  const AGE_ORDER = [
+    '18-24 years old',
+    '25-34 years old',
+    '35-44 years old',
+    '45-54 years old',
+    '55-64 years old',
+    '65 years or older'
+  ];
+
+  // Industry Abbreviations Mapping
+  const INDUSTRY_ABBREVIATIONS = {
+    'Software Development': 'Software Dev.',
+    'Banking/Financial Services': 'Financial Serv.',
+    'Internet, Telecomm or Information Services': 'Info/Tel Services',
+    'Retail and Consumer Services': 'Retailers',
+    'Media & Advertising Services': 'Media & Ad Serv.',
+    'Transportation, or Supply Chain': 'Trans/Supply Chain'
+  };
+
+  // ==========================
+  // CONFIG: ROLE MAPPING
+  // ==========================
+  const ROLE_DEFINITIONS = {
+    'frontend': ['Developer, front-end'],
+    'ai_ml': ['Developer, AI apps or physical AI', 'Applied scientist', 'AI/ML engineer'],
+    // Added 'DevOps engineer or professional' here
+    'cloud_sec': ['Cloud infrastructure engineer', 'Cybersecurity or InfoSec professional', 'DevOps engineer or professional'], 
+    'backend': ['Developer, back-end', 'Developer, embedded applications or devices', 'Developer, desktop or enterprise applications'],
+    'data': ['Data engineer', 'Data scientist', 'Database administrator or engineer', 'Data or business analyst'],
+    'pm': ['Project manager', 'Product manager'],
+    'support': ['Architect, software or solutions', 'Support engineer or analyst', 'System administrator'],
+    'fullstack': ['Developer, full-stack'],
+    'mobile_game': ['Developer, mobile', 'Developer, game or graphics'],
+    'other_roles': ['Developer, QA or test', 'Financial analyst or engineer', 'UX, Research Ops or UI design professional']
+  };
+
+  const ROLE_NAMES = {
+    'frontend': 'Frontend',
+    'ai_ml': 'AI / ML',
+    'cloud_sec': 'Cloud, Sec & Ops', 
+    'backend': 'Backend',
+    'data': 'Data',
+    'pm': 'PM',
+    'support': 'Support',
+    'fullstack': 'Full-Stack',
+    'mobile_game': 'Mobile/Game',
+    'other_roles': 'Others'
+  };
+
+  let rawData = [];
+  let languageDataByRole = null;
+
+  const tooltip = d3.select('#tooltip');
+
+  const LANG_NORMALIZE = {
+    'Bash/Shell (all shells)': 'Bash/Shell'
+  };
+
+  // ==========================
+  // 1) DATA HELPERS
+  // ==========================
+
+  function splitLanguages(str) {
+    if (!str) return [];
+    return String(str)
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+      .map(lang => LANG_NORMALIZE[lang] || lang);
+  }
+
+  function computeLanguageDataByRole(data) {
+    const roleKeys = ['all', ...Object.keys(ROLE_DEFINITIONS)];
+
+    function matchesRole(row, roleKey) {
+      if (roleKey === 'all') return true;
+      const targetSubstrings = ROLE_DEFINITIONS[roleKey];
+      if (!targetSubstrings) return false;
+      const devType = (row.DevType || '').toLowerCase();
+      return targetSubstrings.some(sub => devType.includes(sub.toLowerCase()));
+    }
+
+    const result = {};
+
+    roleKeys.forEach(role => {
+      const filtered = data.filter(d => d.Language && matchesRole(d, role));
+      const counts = new Map();
+      let total = 0;
+
+      filtered.forEach(row => {
+        splitLanguages(row.Language).forEach(lang => {
+          counts.set(lang, (counts.get(lang) || 0) + 1);
+          total += 1;
+        });
+      });
+
+      const entries = Array.from(counts.entries())
+        .map(([language, count]) => ({
+          language,
+          count,
+          pct: total ? (count / total * 100) : 0
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      const topN = 10;
+      const chartData = [];
+      const othersDetail = [];
+
+      entries.forEach((entry, idx) => {
+        if (idx < topN) {
+          chartData.push({
+            language: entry.language,
+            value: +entry.pct.toFixed(1)
+          });
+        } else {
+          othersDetail.push(entry);
+        }
+      });
+
+      if (othersDetail.length) {
+        const othersPct = d3.sum(othersDetail, d => d.pct);
+        chartData.push({
+          language: 'Others',
+          value: +othersPct.toFixed(1),
+          _isOthers: true,
+          // CRITICAL: Attach the list of other languages so we can filter rows later
+          othersList: othersDetail.map(d => d.language)
+        });
+      }
+
+      result[role] = { chartData, othersDetail };
+    });
+
+    return result;
+  }
+
+  function getRowsForLanguage(lang, othersList = null) {
+    if (lang === 'Others' && othersList) {
+        // Special case: Filter rows that contain ANY language in the othersList
+        return rawData.filter(d => {
+            const myLangs = splitLanguages(d.Language);
+            return myLangs.some(l => othersList.includes(l));
+        });
+    }
+    return rawData.filter(d => splitLanguages(d.Language).includes(lang));
+  }
+
+  // ==========================
+  // 2) DETAIL MODAL (4 PANEL)
+  // ==========================
+  
+  function openDetail(language, othersList = null) {
+    const modal = document.getElementById('detailModal');
+    const title = document.getElementById('detailTitle');
+    title.textContent = `Developers Using — ${language}`;
+    modal.classList.remove('hidden');
+    renderLanguageDetail(language, othersList);
+  }
+
+  function renderLanguageDetail(language, othersList) {
+    // Pass othersList to getRowsForLanguage
+    const data = getRowsForLanguage(language, othersList);
+    
+    if (!data.length) {
+      ['ageChart','expChart','eduChart','indChart'].forEach(id => {
+        d3.select('#' + id).selectAll('*').remove();
+      });
+      const c = d3.select('#ageChart');
+      c.append('div').style('color','salmon').style('padding','12px').style('font-size','12px').text('No data');
+      return;
+    }
+    renderAgeChart(data);
+    renderExperienceChart(data);
+    renderEducationChart(data);
+    renderIndustryChart(data);
+  }
+
+  function renderAgeChart(data) {
+    const container = d3.select('#ageChart');
+    container.selectAll('*').remove();
+    const width = container.node().clientWidth || 260;
+    const height = container.node().clientHeight || 180;
+    const margin = { top: 12, right: 8, bottom: 30, left: 40 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const svg = container.append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    const grouped = d3.rollups(data, v => v.length, d => d.Age || 'Unknown');
+    const ageOrder = AGE_ORDER.concat(['Unknown']);
+    grouped.sort((a, b) => ageOrder.indexOf(a[0]) - ageOrder.indexOf(b[0]));
+
+    const x = d3.scaleBand().domain(grouped.map(d => d[0])).range([0, innerW]).padding(0.25);
+    const y = d3.scaleLinear().domain([0, d3.max(grouped, d => d[1]) || 1]).nice().range([innerH, 0]);
+
+    g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).tickSizeOuter(0)).selectAll('text').style('font-size','10px').attr('dy','1em').call(sel => sel.each(function() { const t = d3.select(this); t.text(t.text().replace(' years old','').replace(' years or older','+')); }));
+    g.append('g').call(d3.axisLeft(y).ticks(3).tickFormat(d3.format('d'))).selectAll('text').style('font-size','10px');
+    
+    g.selectAll('rect').data(grouped).join('rect')
+      .attr('x', d => x(d[0])).attr('y', d => y(d[1]))
+      .attr('width', x.bandwidth()).attr('height', d => innerH - y(d[1]))
+      .attr('fill', '#7aa2ff').attr('opacity', 0.9)
+      .on('mousemove', (event, d) => {
+        tooltip.html(`<strong>${d[0]}</strong><br>Count: ${d[1]}`)
+          .style('left', `${event.pageX}px`).style('top', `${event.pageY}px`).style('opacity', 1);
+      })
+      .on('mouseleave', () => tooltip.style('opacity', 0));
+  }
+
+  function renderExperienceChart(data) {
+    const container = d3.select('#expChart');
+    container.selectAll('*').remove();
+    const width = container.node().clientWidth || 260;
+    const height = container.node().clientHeight || 180;
+    const margin = { top: 12, right: 8, bottom: 30, left: 40 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const svg = container.append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // CAP at 40
+    const values = data.map(d => +d.WorkExp).filter(v => !Number.isNaN(v) && v >= 0).map(v => Math.min(v, 40));
+    if (!values.length) {
+      g.append('text').attr('x', innerW/2).attr('y', innerH/2).attr('text-anchor','middle').attr('fill','salmon').style('font-size','11px').text('No experience data');
+      return;
+    }
+
+    const x = d3.scaleLinear().domain([0, 40]).range([0, innerW]);
+    const bins = d3.bin().domain([0, 40]).thresholds([0, 5, 10, 15, 20, 25, 30, 35, 40])(values);
+    const y = d3.scaleLinear().domain([0, d3.max(bins, d => d.length) || 1]).nice().range([innerH, 0]);
+    
+    // Fixed Ticks: 0, 10, 20, 30, 40+
+    const xAxis = d3.axisBottom(x).tickValues([0, 10, 20, 30, 40]).tickFormat(d => d === 40 ? "40+" : d);
+
+    g.append('g').attr('transform', `translate(0,${innerH})`).call(xAxis).selectAll('text').style('font-size','10px');
+    g.append('g').call(d3.axisLeft(y).ticks(3).tickFormat(d3.format('d'))).selectAll('text').style('font-size','10px');
+    
+    g.selectAll('rect').data(bins).join('rect')
+      .attr('x', d => x(d.x0)).attr('y', d => y(d.length))
+      .attr('width', d => Math.max(0, x(d.x1) - x(d.x0) - 1)).attr('height', d => innerH - y(d.length))
+      .attr('fill', '#7aa2ff').attr('opacity', 0.9)
+      .on('mousemove', (event, d) => {
+        tooltip.html(`<strong>${d.x0}-${d.x1} yrs</strong><br>Count: ${d.length}`)
+          .style('left', `${event.pageX}px`).style('top', `${event.pageY}px`).style('opacity', 1);
+      })
+      .on('mouseleave', () => tooltip.style('opacity', 0));
+  }
+
+  function renderEducationChart(data) {
+    const container = d3.select('#eduChart');
+    container.selectAll('*').remove();
+    const width = container.node().clientWidth || 260;
+    const height = container.node().clientHeight || 190;
+    const margin = { top: 12, right: 8, bottom: 8, left: 80 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const svg = container.append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+    
+    const grouped = d3.rollups(data, v => v.length, d => d.EdLevel || 'Unknown').sort((a, b) => b[1] - a[1]);
+    const top = grouped.slice(0, 6);
+    if (grouped.length > 6) { const othersCount = d3.sum(grouped.slice(6), d => d[1]); top.push(['Other', othersCount]); }
+
+    const y = d3.scaleBand().domain(top.map(d => d[0])).range([0, innerH]).padding(0.25);
+    const x = d3.scaleLinear().domain([0, d3.max(top, d => d[1]) || 1]).nice().range([0, innerW]);
+
+    g.append('g').call(d3.axisLeft(y).tickSizeOuter(0)).selectAll('text').style('font-size','10px').call(sel => sel.each(function() { const t = d3.select(this); t.text(t.text().replace('Secondary school (e.g. American high school, German Realschule or Gymnasium, etc.)','High School').replace('Bachelor’s degree (B.A., B.S., B.Eng., etc.)','Bachelor').replace('Master’s degree (M.A., M.S., M.Eng., MBA, etc.)','Master').replace('Associate degree (A.A., A.S., etc.)','Associate').replace('Professional degree (JD, MD, Ph.D, Ed.D, etc.)','Ph.D').replace('Other doctoral degree (Ph.D., Ed.D., etc.)','Ph.D')); }));
+    g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).ticks(3).tickFormat(d3.format('d'))).selectAll('text').style('font-size','10px');
+    
+    g.selectAll('rect').data(top).join('rect')
+      .attr('y', d => y(d[0])).attr('x', 0)
+      .attr('height', d => y.bandwidth()).attr('width', d => x(d[1]))
+      .attr('fill', '#7aa2ff').attr('opacity', 0.9)
+      .on('mousemove', (event, d) => {
+        tooltip.html(`<strong>${d[0]}</strong><br>Count: ${d[1]}`)
+          .style('left', `${event.pageX}px`).style('top', `${event.pageY}px`).style('opacity', 1);
+      })
+      .on('mouseleave', () => tooltip.style('opacity', 0));
+  }
+
+  function renderIndustryChart(data) {
+    const container = d3.select('#indChart');
+    container.selectAll('*').remove();
+    const width = container.node().clientWidth || 260;
+    const height = container.node().clientHeight || 190;
+    const margin = { top: 12, right: 8, bottom: 8, left: 100 }; // Increased left margin for longer labels
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const svg = container.append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // 1. Normalize "Other:" -> "Others"
+    data.forEach(d => {
+        if (d.Industry === 'Other:') d.Industry = 'Others';
+    });
+
+    // 2. Rollup
+    const grouped = d3.rollups(data, v => v.length, d => d.Industry || 'Unknown').sort((a, b) => b[1] - a[1]);
+
+    // 3. Separate Others
+    const base = grouped.filter(d => d[0] !== 'Others');
+    const othersGroup = grouped.find(d => d[0] === 'Others');
+    
+    // CHANGED: Max 10 bars (instead of 8)
+    const maxBars = 10;
+    // Take top N-1 regular items
+    const topBase = base.slice(0, maxBars - 1);
+    
+    // Sum up remaining regular + existing Others
+    const tailBase = base.slice(maxBars - 1);
+    let otherTotal = 0;
+    if (othersGroup) otherTotal += othersGroup[1];
+    if (tailBase.length) otherTotal += d3.sum(tailBase, d => d[1]);
+    
+    const top = [...topBase];
+    if (otherTotal > 0) top.push(['Others', otherTotal]);
+
+    const y = d3.scaleBand().domain(top.map(d => d[0])).range([0, innerH]).padding(0.25);
+    const x = d3.scaleLinear().domain([0, d3.max(top, d => d[1]) || 1]).nice().range([0, innerW]);
+
+    // Apply Short Names for Axis Labels
+    g.append('g').call(d3.axisLeft(y).tickSizeOuter(0)).selectAll('text').style('font-size','10px').call(sel => sel.each(function() { 
+        const t = d3.select(this); 
+        const full = t.text();
+        const short = INDUSTRY_ABBREVIATIONS[full] || full;
+        t.text(short); 
+    }));
+    
+    g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).ticks(3).tickFormat(d3.format('d'))).selectAll('text').style('font-size','10px');
+    
+    g.selectAll('rect').data(top).join('rect')
+      .attr('y', d => y(d[0])).attr('x', 0)
+      .attr('height', d => y.bandwidth()).attr('width', d => x(d[1]))
+      .attr('fill', '#7aa2ff').attr('opacity', 0.9)
+      .on('mousemove', (event, d) => {
+        // Show FULL name in Tooltip
+        tooltip.html(`<strong>${d[0]}</strong><br>Count: ${d[1]}`)
+          .style('left', `${event.pageX}px`).style('top', `${event.pageY}px`).style('opacity', 1);
+      })
+      .on('mouseleave', () => tooltip.style('opacity', 0));
+  }
+
+  function initDetailModal() {
+    const modal = document.getElementById('detailModal');
+    const closeBtn = document.getElementById('detailClose');
+    const backdrop = document.querySelector('#detailModal .detail-backdrop');
+    closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
+    backdrop.addEventListener('click', () => modal.classList.add('hidden'));
+  }
+
+  // ==========================
+  // 3) PIE / DONUT CHART
+  // ==========================
+
+  function initPie() {
+    const container = d3.select('#pieViz');
+    container.selectAll('svg').remove();
+
+    const width = container.node().clientWidth;
+    const height = container.node().clientHeight;
+    
+    // Radius 0.35 to leave space for labels
+    const radius = Math.min(width, height) * 0.35;
+
+    const svg = container.append('svg')
+      .attr('width', width)
+      .attr('height', height)
+      .attr('viewBox', [-width/2, -height/2, width, height])
+      .style('display', 'block');
+
+    const g = svg.append('g').attr('transform', 'translate(0,10)');
+    const slices = g.append('g').attr('class', 'slices');
+    const label = g.append('g').attr('class', 'labels');
+
+    const extendedScheme = d3.schemeTableau10.concat(d3.schemePaired);
+    const color = d3.scaleOrdinal(extendedScheme);
+    
+    if (languageDataByRole && languageDataByRole.all) {
+       color.domain(languageDataByRole.all.chartData.map(d => d.language));
+    }
+
+    const arc = d3.arc();
+    const pie = d3.pie().value(d => d.value).sort(null);
+
+    function render(role = 'all') {
+      const roleData = languageDataByRole[role] || { chartData: [], othersDetail: [] };
+      const data = roleData.chartData;
+      const othersDetail = roleData.othersDetail || [];
+      const innerR = radius * 0.55;
+
+      arc.innerRadius(innerR).outerRadius(radius);
+      const arcs = pie(data);
+
+      const path = slices.selectAll('path').data(arcs, d => d.data.language);
+      path.exit().transition().duration(350).attrTween('d', function(d) {
+        const i = d3.interpolate(d, { startAngle: d.endAngle, endAngle: d.endAngle });
+        return t => arc(i(t));
+      }).remove();
+
+      const pathEnter = path.enter().append('path')
+        .attr('fill', d => color(d.data.language))
+        .attr('stroke', 'rgba(0,0,0,0.25)')
+        .attr('stroke-width', 0.5)
+        .on('mousemove', (event, d) => {
+          let html;
+          if (d.data.language === 'Others' && othersDetail.length) {
+            const list = othersDetail.slice(0, 10).map(x => `${x.language} (${x.count})`).join('<br>');
+            const more = othersDetail.length > 10 ? `<br>...and ${othersDetail.length - 10} more` : '';
+            html = `<strong>Others</strong><br>${list}${more}`;
+          } else {
+            html = `<strong>${d.data.language}</strong><br>${d.data.value}%`;
+          }
+          tooltip.html(html).style('left', `${event.pageX}px`).style('top', `${event.pageY}px`).style('opacity', 1);
+        })
+        .on('mouseleave', () => tooltip.style('opacity', 0))
+        .on('click', (event, d) => {
+            if (d.data.language === 'Others') {
+                openDetail('Others', d.data.othersList);
+            } else {
+                openDetail(d.data.language);
+            }
+        });
+
+      pathEnter.merge(path).transition().duration(600).attrTween('d', function(d) {
+          const i = d3.interpolate(this._current || { startAngle: d.startAngle, endAngle: d.startAngle }, d);
+          this._current = i(0);
+          return t => arc(i(t));
+        });
+
+      const text = label.selectAll('text').data(arcs, d => d.data.language);
+      text.exit().transition().duration(300).style('opacity', 0).remove();
+
+      const textEnter = text.enter().append('text')
+        .attr('dy', '0.35em')
+        .style('font-size', '11px')
+        .style('fill', 'var(--text)')
+        .style('text-shadow', '0 1px 2px rgba(0,0,0,0.8)')
+        .style('pointer-events', 'none')
+        .style('opacity', 0);
+
+      textEnter.merge(text).transition().duration(600)
+        .attr('transform', d => {
+          const [cx, cy] = arc.centroid(d);
+          let factor = 1.45; 
+          return `translate(${cx * factor}, ${cy * factor})`;
+        })
+        .style('text-anchor', 'middle')
+        .style('opacity', d => {
+          if (d.data.value < 3 && d.data.language !== 'Others') return 0;
+          return 0.95;
+        })
+        .text(d => d.data.language);
+      label.raise();
+    }
+    render('all');
+    d3.select('#roleFilter').on('change', e => render(e.target.value));
+    mountPieResize(() => { d3.select('#pieViz svg').remove(); initPie(); });
+  }
+
+  // ==========================
+  // 4) CHOROPLETH MAP
+  // ==========================
+  function initMap() {
+    const container = d3.select('#mapViz');
+    container.selectAll('*').remove();
+    const width = container.node().clientWidth;
+    const height = container.node().clientHeight;
+
+    const svg = container.append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g');
+    const projection = d3.geoNaturalEarth1().fitExtent([[20, 20], [width - 20, height - 20]], { type: 'Sphere' });
+    const path = d3.geoPath(projection);
+
+    const salaryByCountry = d3.rollup(
+      rawData.filter(d => d.Salary != null && !Number.isNaN(+d.Salary)),
+      v => d3.mean(v, d => +d.Salary),
+      d => d.Country
+    );
+    const minSalary = d3.min(Array.from(salaryByCountry.values())) || 20000;
+    const maxSalary = d3.max(Array.from(salaryByCountry.values())) || 130000;
+    const color = d3.scaleSequential(d3.interpolateTurbo).domain([minSalary, maxSalary]);
+
+    const legend = container.append('div').attr('class', 'legend');
+    legend.html(`<h4>Avg Salary (USD)</h4><div class="scale"></div>`);
+    const scaleDiv = legend.select('.scale');
+    for (let i = 0; i < 8; i++) {
+      const v = minSalary + (maxSalary - minSalary) * (i / 7);
+      scaleDiv.append('div').style('background', color(v));
+    }
+
+    const zoom = d3.zoom().scaleExtent([1, 8]).on('zoom', (event) => g.attr('transform', event.transform));
+    svg.call(zoom);
+
+    const WORLD_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+    function nameFromFeature(f) { return (f.properties && f.properties.name) || 'Unknown'; }
+
+    d3.json(WORLD_URL).then((world) => {
+      const countries = topojson.feature(world, world.objects.countries).features;
+      g.selectAll('path.country').data(countries).join('path')
+        .attr('class', 'country')
+        .attr('d', d => path(d))
+        .attr('fill', d => {
+          const name = nameFromFeature(d);
+          const val = salaryByCountry.get(name);
+          return val ? color(val) : '#1a2346';
+        })
+        .attr('stroke', 'rgba(255,255,255,0.08)')
+        .attr('stroke-width', 0.6)
+        .on('mousemove', (event, d) => {
+          const name = nameFromFeature(d);
+          const val = salaryByCountry.get(name);
+          tooltip.html(`<strong>${name}</strong><br>${val ? '$' + d3.format(',')(Math.round(val)) : 'No data'}`)
+            .style('left', `${event.pageX}px`).style('top', `${event.pageY}px`).style('opacity', 1);
+        })
+        .on('mouseleave', () => tooltip.style('opacity', 0))
+        .on('click', (event, d) => {
+          const name = nameFromFeature(d);
+          openCountryModal(name);
+        });
+      
+      g.append('path').attr('d', path(d3.geoGraticule10())).attr('fill', 'none').attr('stroke', 'rgba(255,255,255,0.05)');
+      g.append('path').attr('d', path({ type: 'Sphere' })).attr('fill', 'none').attr('stroke', 'rgba(255,255,255,0.12)');
+    }).catch(err => {
+      console.error('Map load error:', err);
+      container.append('div').style('padding', '12px').style('color', 'salmon').text('Failed to load world map. Check network / CORS.');
+    });
+  }
+
+  // ==========================
+  // 5) COUNTRY MODAL (UPDATED)
+  // ==========================
+
+  function openCountryModal(countryName) {
+    const modal = document.getElementById('countryModal');
+    const title = document.getElementById('countryTitle');
+    title.textContent = `${countryName} — Profile`;
+    modal.classList.remove('hidden');
+    
+    // Render all 3 charts
+    renderCountryRadar(countryName);
+    renderCountryLangChart(countryName);
+    renderCountryRoleChart(countryName);
+  }
+
+  // Chart 1: Radar (Left)
+  function renderCountryRadar(countryName) {
+    const container = d3.select('#countryRadarViz');
+    container.selectAll('*').remove();
+
+    const width = container.node().clientWidth;
+    const height = container.node().clientHeight || 520;
+    const radius = Math.min(width, height) * 0.4;
+    const center = { x: width/2, y: height/2 };
+
+    const rows = rawData.filter(d => d.Country === countryName && d.Salary != null && !Number.isNaN(+d.Salary) && d.Language);
+    const totals = new Map();
+    const counts = new Map();
+
+    rows.forEach(r => {
+      const salary = +r.Salary;
+      splitLanguages(r.Language).forEach(lang => {
+        totals.set(lang, (totals.get(lang) || 0) + salary);
+        counts.set(lang, (counts.get(lang) || 0) + 1);
+      });
+    });
+
+    let entries = Array.from(totals.keys()).map(lang => {
+      const avg = totals.get(lang) / counts.get(lang);
+      return [lang, avg, counts.get(lang)];
+    });
+
+    if (!entries.length) {
+      container.append('div').style('padding','12px').style('color','salmon').text('No salary data.');
+      return;
+    }
+
+    entries.sort((a,b) => b[2] - a[2]);
+    entries = entries.slice(0, 8); // Top 8 for Radar
+
+    const maxVal = d3.max(entries, d => d[1]) || 1;
+    const valueToR = (v) => radius * (v / maxVal);
+    const angle = d3.scaleLinear().domain([0, entries.length]).range([0, Math.PI * 2]);
+
+    const svg = container.append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g');
+
+    // Grid circles
+    for (let i=1; i<=4; i++) {
+      g.append('circle').attr('cx', center.x).attr('cy', center.y).attr('r', (radius/4)*i).attr('fill', 'none').attr('stroke', 'rgba(255,255,255,0.08)');
+    }
+
+    // Axes
+    const points = entries.map((d, i) => {
+      const a = angle(i) - Math.PI/2;
+      const r = valueToR(d[1]);
+      return [ center.x + Math.cos(a) * r, center.y + Math.sin(a) * r ];
+    });
+
+    entries.forEach((d, i) => {
+      const a = angle(i) - Math.PI/2;
+      const x2 = center.x + Math.cos(a) * radius;
+      const y2 = center.y + Math.sin(a) * radius;
+      g.append('line').attr('x1', center.x).attr('y1', center.y).attr('x2', x2).attr('y2', y2).attr('stroke', 'rgba(255,255,255,0.08)');
+      
+      const lx = center.x + Math.cos(a) * (radius + 20);
+      const ly = center.y + Math.sin(a) * (radius + 20);
+      g.append('text').attr('x', lx).attr('y', ly).attr('text-anchor', 'middle').attr('dominant-baseline','middle').attr('fill', 'var(--text)').style('font-size','12px').text(d[0]);
+    });
+
+    // Path
+    const line = d3.line().curve(d3.curveLinearClosed);
+    g.append('path').attr('d', line(points)).attr('fill', '#7aa2ff22').attr('stroke', '#7aa2ff').attr('stroke-width', 2);
+
+    // Points
+    g.selectAll('circle.vertex').data(entries).join('circle')
+      .attr('class','vertex').attr('r', 4).attr('cx', (d,i) => points[i][0]).attr('cy', (d,i) => points[i][1]).attr('fill', '#7aa2ff')
+      .on('mousemove', (event, d) => {
+        tooltip.html(`<strong>${d[0]}</strong><br>$${d3.format(',')(Math.round(d[1]))}`).style('left', `${event.pageX}px`).style('top', `${event.pageY}px`).style('opacity', 1);
+      }).on('mouseleave', () => tooltip.style('opacity', 0));
+    
+    // Title inside Radar
+    g.append('text').attr('x', center.x).attr('y', center.y - radius - 30).attr('text-anchor','middle').attr('fill','var(--text)').style('font-size','14px').style('font-weight','bold').text('Avg Salary by Language');
+  }
+
+  // Chart 2: Language Share (Right Top) - Horizontal Bar
+  function renderCountryLangChart(countryName) {
+    const container = d3.select('#countryLangViz');
+    container.selectAll('*').remove();
+    const width = container.node().clientWidth;
+    const height = container.node().clientHeight;
+    const margin = { top: 10, right: 30, bottom: 20, left: 80 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const rows = rawData.filter(d => d.Country === countryName && d.Language);
+    const counts = new Map();
+    let total = 0;
+    rows.forEach(r => {
+      splitLanguages(r.Language).forEach(l => {
+        counts.set(l, (counts.get(l)||0)+1);
+        total++;
+      });
+    });
+    
+    let data = Array.from(counts.entries()).map(([k,v]) => ({ label: k, value: v })).sort((a,b) => b.value - a.value).slice(0, 8);
+
+    if (!data.length) {
+      container.append('div').style('padding','10px').text('No data'); return;
+    }
+
+    const svg = container.append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    const y = d3.scaleBand().domain(data.map(d => d.label)).range([0, innerH]).padding(0.2);
+    const x = d3.scaleLinear().domain([0, d3.max(data, d => d.value)]).range([0, innerW]);
+
+    g.append('g').call(d3.axisLeft(y).tickSizeOuter(0)).selectAll('text').style('font-size','11px');
+    g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).ticks(3)).selectAll('text').style('font-size','10px');
+
+    g.selectAll('rect').data(data).join('rect')
+      .attr('y', d => y(d.label))
+      .attr('height', y.bandwidth())
+      .attr('x', 0)
+      .attr('width', d => x(d.value))
+      .attr('fill', '#7aa2ff')
+      .attr('opacity', 0.9);
+      
+    // Value labels inside
+    g.selectAll('.v-label').data(data).join('text')
+      .attr('class','v-label')
+      .attr('x', d => x(d.value) + 4)
+      .attr('y', d => y(d.label) + y.bandwidth()/2)
+      .attr('dy', '0.35em')
+      .style('font-size','10px')
+      .style('fill', 'var(--muted)')
+      .text(d => d.value);
+  }
+
+  // Chart 3: Role Distribution (Right Bottom) - Horizontal Bar
+  function renderCountryRoleChart(countryName) {
+    const container = d3.select('#countryRoleViz');
+    container.selectAll('*').remove();
+    const width = container.node().clientWidth;
+    const height = container.node().clientHeight;
+    const margin = { top: 10, right: 30, bottom: 20, left: 80 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const rows = rawData.filter(d => d.Country === countryName);
+    const roleCounts = [];
+
+    // Count by defined Roles
+    for (const [key, substrings] of Object.entries(ROLE_DEFINITIONS)) {
+      const count = rows.filter(r => {
+        const devType = (r.DevType || '').toLowerCase();
+        return substrings.some(sub => devType.includes(sub.toLowerCase()));
+      }).length;
+      if (count > 0) {
+        roleCounts.push({ label: ROLE_NAMES[key] || key, value: count });
+      }
+    }
+    
+    roleCounts.sort((a,b) => b.value - a.value);
+    const topData = roleCounts.slice(0, 8); // Top 8 roles
+
+    if (!topData.length) {
+      container.append('div').style('padding','10px').text('No role data'); return;
+    }
+
+    const svg = container.append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    const y = d3.scaleBand().domain(topData.map(d => d.label)).range([0, innerH]).padding(0.2);
+    const x = d3.scaleLinear().domain([0, d3.max(topData, d => d.value)]).range([0, innerW]);
+
+    g.append('g').call(d3.axisLeft(y).tickSizeOuter(0)).selectAll('text').style('font-size','11px');
+    g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).ticks(3)).selectAll('text').style('font-size','10px');
+
+    g.selectAll('rect').data(topData).join('rect')
+      .attr('y', d => y(d.label))
+      .attr('height', y.bandwidth())
+      .attr('x', 0)
+      .attr('width', d => x(d.value))
+      .attr('fill', '#64e6a8') // Different color for roles
+      .attr('opacity', 0.9);
+
+    g.selectAll('.v-label').data(topData).join('text')
+      .attr('class','v-label')
+      .attr('x', d => x(d.value) + 4)
+      .attr('y', d => y(d.label) + y.bandwidth()/2)
+      .attr('dy', '0.35em')
+      .style('font-size','10px')
+      .style('fill', 'var(--muted)')
+      .text(d => d.value);
+  }
+
+  function initCountryModal() {
+    const modal = document.getElementById('countryModal');
+    const closeBtn = document.getElementById('countryClose');
+    const backdrop = document.querySelector('#countryModal .detail-backdrop');
+    closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
+    backdrop.addEventListener('click', () => modal.classList.add('hidden'));
+  }
+
+  // ==========================
+  // 6) LOAD CSV & BOOTSTRAP
+  // ==========================
+
+  initDetailModal();
+  initCountryModal();
+
+  d3.csv('dataset_new.csv', d3.autoType)
+    .then(data => {
+      rawData = data;
+      // Normalization at load time for consistency
+      rawData.forEach(d => {
+        if (d.Industry === 'Other:') d.Industry = 'Others';
+      });
+      
+      languageDataByRole = computeLanguageDataByRole(rawData);
+      initPie();
+      initMap();
+
+      console.group('%cDataset + Template Runtime Tests','color:#7aa2ff');
+      console.assert(rawData.length > 0, 'dataset_new.csv loaded');
+      console.assert(languageDataByRole && languageDataByRole.all, 'languageDataByRole computed');
+      console.groupEnd();
+    })
+    .catch(err => {
+      console.error('Failed to load dataset_new.csv:', err);
+      alert('Failed to load dataset_new.csv. Make sure it is in the same folder as this HTML file.');
+    });
+
+  </script>
+</body>
+</html>
